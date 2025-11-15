@@ -235,3 +235,166 @@ def get_booking(booking_id: str):
         raise HTTPException(status_code=404, detail="Not found")
     b["id"] = str(b.pop("_id"))
     return b
+
+
+# Admin: seed demo data (requires auth)
+class SeedResponse(BaseModel):
+    movies_created: int
+    shows_created: int
+
+@app.post("/admin/seed", response_model=SeedResponse)
+def seed_demo(user=Depends(get_current_user)):
+    posters = {
+        "Neon Skies": "https://images.unsplash.com/photo-1524985069026-dd778a71c7b4?q=80&w=1200&auto=format&fit=crop",
+        "Quantum Drift": "https://images.unsplash.com/photo-1542204165-65bf26472b9b?q=80&w=1200&auto=format&fit=crop",
+        "Echoes of Orion": "https://images.unsplash.com/photo-1497032628192-86f99bcd76bc?q=80&w=1200&auto=format&fit=crop",
+    }
+
+    catalog = [
+        {
+            "title": "Neon Skies",
+            "description": "A synthwave-soaked heist across a city of light.",
+            "duration_minutes": 118,
+            "rating": "PG-13",
+            "poster_url": posters["Neon Skies"],
+            "backdrop_url": posters["Neon Skies"],
+            "genre": ["Action", "Sci-Fi"],
+        },
+        {
+            "title": "Quantum Drift",
+            "description": "A pilot learns to bend time to save her crew.",
+            "duration_minutes": 124,
+            "rating": "PG-13",
+            "poster_url": posters["Quantum Drift"],
+            "backdrop_url": posters["Quantum Drift"],
+            "genre": ["Adventure", "Sci-Fi"],
+        },
+        {
+            "title": "Echoes of Orion",
+            "description": "Two strangers share dreams from a distant star.",
+            "duration_minutes": 110,
+            "rating": "PG",
+            "poster_url": posters["Echoes of Orion"],
+            "backdrop_url": posters["Echoes of Orion"],
+            "genre": ["Drama", "Romance"],
+        },
+    ]
+
+    movies_created = 0
+    shows_created = 0
+
+    id_by_title = {}
+
+    # Ensure movies
+    for m in catalog:
+        existing = db["movie"].find_one({"title": m["title"]})
+        if existing:
+            id_by_title[m["title"]] = str(existing["_id"])
+            continue
+        movie = Movie(**m)
+        mid = create_document("movie", movie)
+        id_by_title[m["title"]] = str(mid)
+        movies_created += 1
+
+    # Ensure shows
+    now = now_utc().replace(minute=0, second=0, microsecond=0)
+    defaults = [
+        {"screen": "A", "rows": 6, "cols": 10, "price_cents": 1299, "offset_hours": 2},
+        {"screen": "B", "rows": 8, "cols": 12, "price_cents": 1499, "offset_hours": 5},
+        {"screen": "C", "rows": 10, "cols": 14, "price_cents": 1799, "offset_hours": 28},
+    ]
+
+    for title, mid in id_by_title.items():
+        for cfg in defaults:
+            start_time = now + timedelta(hours=cfg["offset_hours"])
+            exists = db["show"].find_one({
+                "movie_id": mid,
+                "start_time": {"$gte": start_time - timedelta(minutes=1), "$lte": start_time + timedelta(minutes=1)},
+                "screen": cfg["screen"],
+            })
+            if exists:
+                continue
+            payload = Show(
+                movie_id=mid,
+                start_time=start_time,
+                screen=cfg["screen"],
+                price_cents=cfg["price_cents"],
+                rows=cfg["rows"],
+                cols=cfg["cols"],
+                seats_booked=[],
+            )
+            create_document("show", payload)
+            shows_created += 1
+
+    return SeedResponse(movies_created=movies_created, shows_created=shows_created)
+
+
+# Auto-seed on startup if empty
+@app.on_event("startup")
+def auto_seed_if_empty():
+    try:
+        movies_count = db["movie"].count_documents({})
+        if movies_count == 0:
+            # Use the same seeding logic without requiring auth
+            posters = {
+                "Neon Skies": "https://images.unsplash.com/photo-1524985069026-dd778a71c7b4?q=80&w=1200&auto=format&fit=crop",
+                "Quantum Drift": "https://images.unsplash.com/photo-1542204165-65bf26472b9b?q=80&w=1200&auto=format&fit=crop",
+                "Echoes of Orion": "https://images.unsplash.com/photo-1497032628192-86f99bcd76bc?q=80&w=1200&auto=format&fit=crop",
+            }
+            catalog = [
+                {
+                    "title": "Neon Skies",
+                    "description": "A synthwave-soaked heist across a city of light.",
+                    "duration_minutes": 118,
+                    "rating": "PG-13",
+                    "poster_url": posters["Neon Skies"],
+                    "backdrop_url": posters["Neon Skies"],
+                    "genre": ["Action", "Sci-Fi"],
+                },
+                {
+                    "title": "Quantum Drift",
+                    "description": "A pilot learns to bend time to save her crew.",
+                    "duration_minutes": 124,
+                    "rating": "PG-13",
+                    "poster_url": posters["Quantum Drift"],
+                    "backdrop_url": posters["Quantum Drift"],
+                    "genre": ["Adventure", "Sci-Fi"],
+                },
+                {
+                    "title": "Echoes of Orion",
+                    "description": "Two strangers share dreams from a distant star.",
+                    "duration_minutes": 110,
+                    "rating": "PG",
+                    "poster_url": posters["Echoes of Orion"],
+                    "backdrop_url": posters["Echoes of Orion"],
+                    "genre": ["Drama", "Romance"],
+                },
+            ]
+            id_by_title = {}
+            for m in catalog:
+                movie = Movie(**m)
+                mid = create_document("movie", movie)
+                id_by_title[m["title"]] = str(mid)
+
+            now = now_utc().replace(minute=0, second=0, microsecond=0)
+            defaults = [
+                {"screen": "A", "rows": 6, "cols": 10, "price_cents": 1299, "offset_hours": 2},
+                {"screen": "B", "rows": 8, "cols": 12, "price_cents": 1499, "offset_hours": 5},
+                {"screen": "C", "rows": 10, "cols": 14, "price_cents": 1799, "offset_hours": 28},
+            ]
+            for title, mid in id_by_title.items():
+                for cfg in defaults:
+                    start_time = now + timedelta(hours=cfg["offset_hours"])
+                    payload = Show(
+                        movie_id=mid,
+                        start_time=start_time,
+                        screen=cfg["screen"],
+                        price_cents=cfg["price_cents"],
+                        rows=cfg["rows"],
+                        cols=cfg["cols"],
+                        seats_booked=[],
+                    )
+                    create_document("show", payload)
+    except Exception as e:
+        # log but don't crash
+        print("Auto seed error:", e)
